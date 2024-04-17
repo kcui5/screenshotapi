@@ -48,9 +48,6 @@ function isValidArgs(url: string, format: string, hardRefresh: string, fullPage:
     if (format !== 'png' && format !== 'base64') {
         return 'Format must be png or base64';
     }
-    if (annotate !== 'true' && annotate !== 'false') {
-        return 'Annotate must be true or false';
-    }
     if (hardRefresh !== 'true' && hardRefresh !== 'false') {
         return 'Hard refresh must be true or false';
     }
