@@ -16,6 +16,8 @@ const express_1 = __importDefault(require("express"));
 const helmet_1 = __importDefault(require("helmet"));
 const playwright_1 = require("playwright");
 const fs_1 = __importDefault(require("fs"));
+const openai_1 = __importDefault(require("openai"));
+require('dotenv').config();
 const app = (0, express_1.default)();
 const PORT = 3000;
 app.use(express_1.default.json());
@@ -27,11 +29,10 @@ function launchBrowser() {
     });
 }
 launchBrowser();
+const openai = new openai_1.default();
 const folder = './cachedSS/';
 function countFilesInDirectory(folder) {
-    fs_1.default.readdir(folder, (err, files) => {
-        return files.length;
-    });
+    //TODO: Count files in given directory folder
     return 0;
 }
 let numCached = countFilesInDirectory(folder);
@@ -89,7 +90,7 @@ app.get('/screenshot', (req, res) => __awaiter(void 0, void 0, void 0, function*
     }
     //File path for caching
     const filePath = folder + sanitizeFilename(url) + '.png';
-    if (hardRefresh === 'false' && fs_1.default.existsSync(filePath)) {
+    if (format === 'png' && hardRefresh === 'false' && fs_1.default.existsSync(filePath)) {
         //Return cached PNG
         try {
             const cachedScreenshot = fs_1.default.readFileSync(filePath);
@@ -109,19 +110,50 @@ app.get('/screenshot', (req, res) => __awaiter(void 0, void 0, void 0, function*
             // Go to page and wait for all dynamic components loaded
             yield page.goto(url, { waitUntil: 'networkidle' });
             yield page.waitForFunction(() => document.readyState === 'complete');
-            const screenshotBuffer = yield page.screenshot({ type: 'png' });
-            res.setHeader('Content-Type', 'image/png');
-            res.send(screenshotBuffer);
-            console.log("Saving to ", filePath);
-            fs_1.default.writeFile(filePath, screenshotBuffer, (err) => {
-                if (err) {
-                    console.error('Failed to save the screenshot:', err);
-                }
-                else {
-                    console.log('Screenshot saved successfully.');
-                    numCached += 1;
-                }
-            });
+            if (format === 'png') {
+                // Return PNG and cache
+                const screenshotBuffer = yield page.screenshot({ type: 'png' });
+                res.setHeader('Content-Type', 'image/png');
+                res.send(screenshotBuffer);
+                console.log("Saving to ", filePath);
+                fs_1.default.writeFile(filePath, screenshotBuffer, (err) => {
+                    if (err) {
+                        console.error('Failed to save the screenshot:', err);
+                    }
+                    else {
+                        console.log('Screenshot saved successfully.');
+                        numCached += 1;
+                    }
+                });
+            }
+            else {
+                const screenshotBuffer = yield page.screenshot();
+                const base64img = screenshotBuffer.toString('base64');
+                const response = yield openai.chat.completions.create({
+                    "model": "gpt-4-vision-preview",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "What’s in this image?"
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": `data:image/png;base64,${base64img}`
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                });
+                res.json({
+                    caption: response.choices[0].message.content,
+                    image: `data:image/png;base64,${base64img}`
+                });
+            }
         }
         catch (error) {
             console.error('Failed to capture screenshot:', error);

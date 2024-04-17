@@ -2,6 +2,9 @@ import express, { Request, Response } from 'express';
 import helmet from 'helmet';
 import { Browser, chromium } from 'playwright';
 import fs from 'fs';
+import OpenAI from 'openai';
+
+require('dotenv').config();
 
 const app = express();
 const PORT = 3000;
@@ -10,20 +13,18 @@ app.use(express.json());
 app.use(helmet());
 
 let browser: Browser;
-
 async function launchBrowser() {
     browser = await chromium.launch();
 }
-
 launchBrowser();
 
-const folder = './cachedSS/';
+const openai = new OpenAI();
 
+const folder = './cachedSS/';
 function countFilesInDirectory(folder: string) {
     //TODO: Count files in given directory folder
     return 0;
 }
-
 let numCached = countFilesInDirectory(folder);
 console.log("Number cached: ", numCached);
 
@@ -36,7 +37,7 @@ function isValidUrl(url: string): boolean {
     return urlRegex.test(url);
 }
 
-function isValidArgs(url: string, format: string, annotate: string, hardRefresh: string, fullPage: string): string {
+function isValidArgs(url: string, format: string, hardRefresh: string, fullPage: string): string {
     // Check if each arg is valid
     if (url === '') {
         return 'URL parameter is required';
@@ -72,14 +73,12 @@ app.get('/screenshot', async (req: Request, res: Response) => {
     console.log("Received request for: ", url);
     const format = String(req.query.format || 'png');
     console.log("Returning in ", format);
-    const annotate = String(req.query.annotate || 'false');
-    console.log("Annotating: ", annotate);
     const hardRefresh = String(req.query.hardRefresh || 'false');
     console.log("Hard refreshing: ", hardRefresh);
     const fullPage = String(req.query.fullPage || 'false');
     console.log("Full page: ", fullPage);
 
-    const valid = isValidArgs(url, format, annotate, hardRefresh, fullPage);
+    const valid = isValidArgs(url, format, hardRefresh, fullPage);
     if (valid !== '') {
         return res.status(400).json({ error: valid })
     }
@@ -87,7 +86,7 @@ app.get('/screenshot', async (req: Request, res: Response) => {
     //File path for caching
     const filePath = folder + sanitizeFilename(url) + '.png'
 
-    if (hardRefresh === 'false' && fs.existsSync(filePath)) {
+    if (format === 'png' && hardRefresh === 'false' && fs.existsSync(filePath)) {
         //Return cached PNG
         try {
             const cachedScreenshot = fs.readFileSync(filePath);
@@ -107,20 +106,50 @@ app.get('/screenshot', async (req: Request, res: Response) => {
             // Go to page and wait for all dynamic components loaded
             await page.goto(url, { waitUntil: 'networkidle' });
             await page.waitForFunction(() => document.readyState === 'complete');
-            const screenshotBuffer = await page.screenshot({ type: 'png' });
+            
+            if (format === 'png') {
+                // Return PNG and cache
+                const screenshotBuffer = await page.screenshot({ type: 'png' });
+                res.setHeader('Content-Type', 'image/png');
+                res.send(screenshotBuffer);
 
-            res.setHeader('Content-Type', 'image/png');
-            res.send(screenshotBuffer);
-
-            console.log("Saving to ", filePath);
-            fs.writeFile(filePath, screenshotBuffer, (err) => {
-                if (err) {
-                    console.error('Failed to save the screenshot:', err);
-                } else {
-                    console.log('Screenshot saved successfully.');
-                    numCached += 1;
-                }
-            });
+                console.log("Saving to ", filePath);
+                fs.writeFile(filePath, screenshotBuffer, (err) => {
+                    if (err) {
+                        console.error('Failed to save the screenshot:', err);
+                    } else {
+                        console.log('Screenshot saved successfully.');
+                        numCached += 1;
+                    }
+                });
+            } else {
+                const screenshotBuffer = await page.screenshot();
+                const base64img = screenshotBuffer.toString('base64');
+                const response = await openai.chat.completions.create({
+                    "model": "gpt-4-vision-preview",
+                    "messages": [
+                      {
+                        "role": "user",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "What’s in this image?"
+                          },
+                          {
+                            "type": "image_url",
+                            "image_url": {
+                              "url": `data:image/png;base64,${base64img}`
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                });
+                res.json({ 
+                    caption: response.choices[0].message.content,
+                    image: `data:image/png;base64,${base64img}` 
+                });
+            }
         } catch (error) {
             console.error('Failed to capture screenshot:', error);
             //Propagate error to user
