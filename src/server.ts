@@ -2,21 +2,31 @@ import express, { Request, Response } from 'express';
 import helmet from 'helmet';
 import { Browser, chromium } from 'playwright';
 import fs from 'fs';
+import { createPool, Pool } from 'generic-pool';
 import OpenAI from 'openai';
 
 require('dotenv').config();
 
 const app = express();
 const PORT = 3000;
+const version = "0.2";
 
 app.use(express.json());
 app.use(helmet());
 
-let browser: Browser;
-async function launchBrowser() {
-    browser = await chromium.launch();
+const factory = {
+    create: async () => {
+        return await chromium.launch();
+    },
+    destroy: async (browser: Browser) => {
+        await browser.close();
+    }
 }
-launchBrowser();
+
+const browserPool: Pool<Browser> = createPool(factory, {
+    max: 10,
+    min: 2
+})
 
 const openai = new OpenAI();
 
@@ -62,7 +72,7 @@ function sanitizeFilename(name: string) {
 }
 
 app.get('/', (req: Request, res: Response) => {
-    res.send('Screenshot API!');
+    res.send('Screenshot API! v' + version);
 });
 
 app.get('/screenshot', async (req: Request, res: Response) => {
@@ -96,6 +106,7 @@ app.get('/screenshot', async (req: Request, res: Response) => {
         }
     } else {
         try {
+            const browser = await browserPool.acquire();
             const page = await browser.newPage();
 
             await page.setViewportSize({ width: 1920, height: 1080 });
@@ -107,6 +118,8 @@ app.get('/screenshot', async (req: Request, res: Response) => {
             if (format === 'png') {
                 // Return PNG and cache
                 const screenshotBuffer = await page.screenshot({ type: 'png' });
+                await page.close();
+                await browserPool.release(browser);
                 res.setHeader('Content-Type', 'image/png');
                 res.send(screenshotBuffer);
 
@@ -121,6 +134,8 @@ app.get('/screenshot', async (req: Request, res: Response) => {
                 });
             } else {
                 const screenshotBuffer = await page.screenshot();
+                await page.close();
+                await browserPool.release(browser);
                 const base64img = screenshotBuffer.toString('base64');
                 const response = await openai.chat.completions.create({
                     "model": "gpt-4-vision-preview",
