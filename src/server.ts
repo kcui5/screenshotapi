@@ -1,14 +1,20 @@
 import express, { Request, Response } from 'express';
+import helmet from 'helmet';
 import { Browser, chromium } from 'playwright';
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+app.use(helmet());
 
-app.get('/', (req: Request, res: Response) => {
-    res.send('Screenshot API!');
-});
+let browser: Browser;
+
+async function launchBrowser() {
+    browser = await chromium.launch();
+}
+
+launchBrowser();
 
 function isValidUrl(url: string): boolean {
     // Checks if the given url is valid
@@ -18,6 +24,10 @@ function isValidUrl(url: string): boolean {
     const urlRegex = /^(https?:\/\/)([\w.-]+\.)+[\w-]+(\/[\w- .\/?%&=]*)?(?:\?[^\s#]*)?(?:#[^\s]*)?$/;
     return urlRegex.test(url);
 }
+
+app.get('/', (req: Request, res: Response) => {
+    res.send('Screenshot API!');
+});
 
 app.get('/screenshot', async (req: Request, res: Response) => {
     const url = req.query.url as string;
@@ -30,14 +40,13 @@ app.get('/screenshot', async (req: Request, res: Response) => {
     }
 
     try {
-        const browser = await chromium.launch();
         const page = await browser.newPage();
 
-        // Go to page and wait for idle (no network connections for at least 500 ms)
+        // Go to page and wait for networkidle (no network connections for at least 500 ms)
         // to ensure all dynamic components loaded
         await page.goto(url, { waitUntil: 'networkidle' });
+        await page.waitForFunction(() => document.readyState === 'complete');
         const screenshotBuffer = await page.screenshot({ type: 'png' });
-        await browser.close();
 
         res.setHeader('Content-Type', 'image/png');
         res.send(screenshotBuffer);
