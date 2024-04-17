@@ -45,7 +45,7 @@ function isValidUrl(url) {
     const urlRegex = /^(https?:\/\/)([\w.-]+\.)+[\w-]+(\/[\w- .\/?%&=]*)?(?:\?[^\s#]*)?(?:#[^\s]*)?$/;
     return urlRegex.test(url);
 }
-function isValidArgs(url, format, annotate, hardRefresh, fullPage) {
+function isValidArgs(url, format, hardRefresh, fullPage) {
     // Check if each arg is valid
     if (url === '') {
         return 'URL parameter is required';
@@ -55,9 +55,6 @@ function isValidArgs(url, format, annotate, hardRefresh, fullPage) {
     }
     if (format !== 'png' && format !== 'base64') {
         return 'Format must be png or base64';
-    }
-    if (annotate !== 'true' && annotate !== 'false') {
-        return 'Annotate must be true or false';
     }
     if (hardRefresh !== 'true' && hardRefresh !== 'false') {
         return 'Hard refresh must be true or false';
@@ -78,13 +75,11 @@ app.get('/screenshot', (req, res) => __awaiter(void 0, void 0, void 0, function*
     console.log("Received request for: ", url);
     const format = String(req.query.format || 'png');
     console.log("Returning in ", format);
-    const annotate = String(req.query.annotate || 'false');
-    console.log("Annotating: ", annotate);
     const hardRefresh = String(req.query.hardRefresh || 'false');
     console.log("Hard refreshing: ", hardRefresh);
     const fullPage = String(req.query.fullPage || 'false');
     console.log("Full page: ", fullPage);
-    const valid = isValidArgs(url, format, annotate, hardRefresh, fullPage);
+    const valid = isValidArgs(url, format, hardRefresh, fullPage);
     if (valid !== '') {
         return res.status(400).json({ error: valid });
     }
