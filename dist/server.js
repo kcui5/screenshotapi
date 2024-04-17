@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const helmet_1 = __importDefault(require("helmet"));
 const playwright_1 = require("playwright");
+const fs_1 = __importDefault(require("fs"));
 const app = (0, express_1.default)();
 const PORT = 3000;
 app.use(express_1.default.json());
@@ -26,6 +27,15 @@ function launchBrowser() {
     });
 }
 launchBrowser();
+const folder = './cachedSS/';
+function countFilesInDirectory(folder) {
+    fs_1.default.readdir(folder, (err, files) => {
+        return files.length;
+    });
+    return 0;
+}
+let numCached = countFilesInDirectory(folder);
+console.log("Number cached: ", numCached);
 function isValidUrl(url) {
     // Checks if the given url is valid
     // Uses regex for any URL that is a base URL, has a subdomain, or a path
@@ -34,34 +44,90 @@ function isValidUrl(url) {
     const urlRegex = /^(https?:\/\/)([\w.-]+\.)+[\w-]+(\/[\w- .\/?%&=]*)?(?:\?[^\s#]*)?(?:#[^\s]*)?$/;
     return urlRegex.test(url);
 }
+function isValidArgs(url, format, annotate, hardRefresh, fullPage) {
+    // Check if each arg is valid
+    if (url === '') {
+        return 'URL parameter is required';
+    }
+    if (!isValidUrl(url)) {
+        return 'URL must match format with optional subpaths, query parameters, or hash fragments: https://example.com';
+    }
+    if (format !== 'png' && format !== 'base64') {
+        return 'Format must be png or base64';
+    }
+    if (annotate !== 'true' && annotate !== 'false') {
+        return 'Annotate must be true or false';
+    }
+    if (hardRefresh !== 'true' && hardRefresh !== 'false') {
+        return 'Hard refresh must be true or false';
+    }
+    if (fullPage !== 'true' && fullPage !== 'false') {
+        return 'Full page must be true or false';
+    }
+    return '';
+}
+function sanitizeFilename(name) {
+    return name.replace(/[^a-z0-9]/gi, '').toLowerCase(); // Remove illegal characters
+}
 app.get('/', (req, res) => {
     res.send('Screenshot API!');
 });
 app.get('/screenshot', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const url = req.query.url;
+    const url = String(req.query.url || '');
     console.log("Received request for: ", url);
-    if (!url) {
-        return res.status(400).json({ error: 'URL parameter is required' });
+    const format = String(req.query.format || 'png');
+    console.log("Returning in ", format);
+    const annotate = String(req.query.annotate || 'false');
+    console.log("Annotating: ", annotate);
+    const hardRefresh = String(req.query.hardRefresh || 'false');
+    console.log("Hard refreshing: ", hardRefresh);
+    const fullPage = String(req.query.fullPage || 'false');
+    console.log("Full page: ", fullPage);
+    const valid = isValidArgs(url, format, annotate, hardRefresh, fullPage);
+    if (valid !== '') {
+        return res.status(400).json({ error: valid });
     }
-    else if (!isValidUrl(url)) {
-        return res.status(400).json({ error: 'URL must match format with optional subpaths, query parameters, or hash fragments: https://example.com' });
+    //File path for caching
+    const filePath = folder + sanitizeFilename(url) + '.png';
+    if (hardRefresh === 'false' && fs_1.default.existsSync(filePath)) {
+        //Return cached PNG
+        try {
+            const cachedScreenshot = fs_1.default.readFileSync(filePath);
+            console.log('File read successfully, returning cached PNG');
+            res.setHeader('Content-Type', 'image/png');
+            res.send(cachedScreenshot);
+        }
+        catch (error) {
+            console.error('Error reading the file:', error);
+            res.status(500).json({ error: 'Failed to capture screenshot ' + error });
+        }
     }
-    try {
-        const page = yield browser.newPage();
-        // Go to page and wait for networkidle (no network connections for at least 500 ms)
-        // to ensure all dynamic components loaded
-        yield page.goto(url, { waitUntil: 'networkidle' });
-        // await page.waitForEvent('load');
-        // await page.waitForEvent('domcontentloaded');
-        yield page.waitForFunction(() => document.readyState === 'complete');
-        const screenshotBuffer = yield page.screenshot({ type: 'png' });
-        res.setHeader('Content-Type', 'image/png');
-        res.send(screenshotBuffer);
-    }
-    catch (error) {
-        console.error('Failed to capture screenshot:', error);
-        //Propagate error to user
-        res.status(500).json({ error: 'Failed to capture screenshot ' + error });
+    else {
+        try {
+            const page = yield browser.newPage();
+            yield page.setViewportSize({ width: 1920, height: 1080 });
+            // Go to page and wait for all dynamic components loaded
+            yield page.goto(url, { waitUntil: 'networkidle' });
+            yield page.waitForFunction(() => document.readyState === 'complete');
+            const screenshotBuffer = yield page.screenshot({ type: 'png' });
+            res.setHeader('Content-Type', 'image/png');
+            res.send(screenshotBuffer);
+            console.log("Saving to ", filePath);
+            fs_1.default.writeFile(filePath, screenshotBuffer, (err) => {
+                if (err) {
+                    console.error('Failed to save the screenshot:', err);
+                }
+                else {
+                    console.log('Screenshot saved successfully.');
+                    numCached += 1;
+                }
+            });
+        }
+        catch (error) {
+            console.error('Failed to capture screenshot:', error);
+            //Propagate error to user
+            res.status(500).json({ error: 'Failed to capture screenshot ' + error });
+        }
     }
 }));
 app.listen(PORT, () => {
